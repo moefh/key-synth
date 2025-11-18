@@ -26,7 +26,7 @@ struct MidiConnector {
     sleep_time_millis: u64,
     midi_check: MidiInput,
     command_receiver: mpsc::Receiver<MidiReaderCommand>,
-    midi_sender: mpsc::Sender<(u64, MidiMessage)>,
+    midi_sender: mpsc::Sender<MidiMessage>,
     connected_port_name: Option<String>,
 }
 
@@ -97,10 +97,10 @@ impl MidiConnector {
         let connect_result = data.midi_in.connect(
             &in_port,
             "midir-read-input",
-            move |stamp, message, midi_sender| {
+            move |_stamp, message, midi_sender| {
                 //println!("data: {:x?}", message);
                 let midi_msg = MidiMessage::decode(message);
-                if let Err(e) = midi_sender.send((stamp, midi_msg)) {
+                if let Err(e) = midi_sender.send(midi_msg) {
                     println!("ERROR sending message: {}", e);
                 }
             },
@@ -117,7 +117,7 @@ impl MidiConnector {
             }
             Ok(conn) => {
                 self.connected_port_name = Some(in_port_name);
-                self.midi_sender.send((0, MidiMessage::PortConnected)).unwrap_or(());
+                self.midi_sender.send(MidiMessage::PortConnected).unwrap_or(());
                 conn
             }
         };
@@ -127,7 +127,7 @@ impl MidiConnector {
             match self.command_receiver.recv_timeout(sleep_time) {
                 Ok(MidiReaderCommand::Close) | Err(mpsc::RecvTimeoutError::Disconnected) => {
                     // disconnect and exit midi reader
-                    self.midi_sender.send((0, MidiMessage::PortDisconnected)).unwrap_or(());
+                    self.midi_sender.send(MidiMessage::PortDisconnected).unwrap_or(());
                     self.connected_port_name = None;
                     let (midi_in, _) = midi_in_connection.close();
                     return MidiReaderData {
@@ -139,7 +139,7 @@ impl MidiConnector {
                 Ok(MidiReaderCommand::ConfigAcceptedPorts(cfg)) => {
                     // change configuration and disconnect/reconnect
                     self.accepted_midi_ports = cfg.accepted_midi_ports;
-                    self.midi_sender.send((0, MidiMessage::PortDisconnected)).unwrap_or(());
+                    self.midi_sender.send(MidiMessage::PortDisconnected).unwrap_or(());
                     self.connected_port_name = None;
                     let (midi_in, _) = midi_in_connection.close();
                     return MidiReaderData {
@@ -157,7 +157,7 @@ impl MidiConnector {
 
             // check if the connection's MIDI IN still exists
             if ! self.has_connected_midi_in_port() {
-                self.midi_sender.send((0, MidiMessage::PortDisconnected)).unwrap_or(());
+                self.midi_sender.send(MidiMessage::PortDisconnected).unwrap_or(());
                 self.connected_port_name = None;
                 let (midi_in, _) = midi_in_connection.close();
                 return MidiReaderData {
@@ -180,8 +180,8 @@ impl MidiConnector {
 }
 
 pub struct MidiReader {
-    pub write: mpsc::Sender<(u64, MidiMessage)>,
-    pub read: mpsc::Receiver<(u64, MidiMessage)>,
+    pub write: mpsc::Sender<MidiMessage>,
+    pub read: mpsc::Receiver<MidiMessage>,
     pub command: mpsc::Sender<MidiReaderCommand>,
 }
 
@@ -189,7 +189,7 @@ impl MidiReader {
     pub fn start(sleep_time_millis: u64, accepted_midi_ports: &[&str]) -> Result<Self, Box<dyn Error>> {
         let midi_check = MidiInput::new("MIDI check")?;
         let midi_in = MidiInput::new("MIDI in")?;
-        let (midi_sender, midi_receiver) = mpsc::channel::<(u64, MidiMessage)>();
+        let (midi_sender, midi_receiver) = mpsc::channel::<MidiMessage>();
         let (command_sender, command_receiver) = mpsc::channel::<MidiReaderCommand>();
 
         let mut connector = MidiConnector {

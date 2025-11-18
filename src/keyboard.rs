@@ -1,7 +1,11 @@
+use std::sync::mpsc;
 use egui::{Rect, Pos2, Color32};
 
+use super::midi_message::{MidiMessage, MidiKeyEvent};
+
 const BORDER_SIZE: f32 = 4.0;
-const BORDER_COLOR: Color32 = Color32::from_rgb(96,0,0);
+const BORDER_COLOR: Color32 = Color32::BLACK;
+const TOP_BORDER_COLOR: Color32 = Color32::from_rgb(96,0,0);
 const PRESSED_KEY_COLOR: Color32 = Color32::from_rgb(64, 128, 255);
 
 struct KeyCollision {
@@ -12,13 +16,23 @@ struct KeyCollision {
 
 pub struct KeyboardState {
     collision: Vec<KeyCollision>,
+    pressing_key: Option<usize>,
 }
 
 impl KeyboardState {
     pub fn new() -> Self {
         KeyboardState {
             collision: Vec::new(),
+            pressing_key: None,
         }
+    }
+}
+
+fn send_note_event(midi_write: &mpsc::Sender<MidiMessage>, key: usize, pressure: u8) {
+    if pressure == 0 {
+        midi_write.send(MidiMessage::NoteOff(1, MidiKeyEvent { key: key as u8, pressure: 0 })).unwrap_or(());
+    } else {
+        midi_write.send(MidiMessage::NoteOn(1, MidiKeyEvent { key: key as u8, pressure })).unwrap_or(());
     }
 }
 
@@ -114,22 +128,24 @@ fn build_key_collision(keyboard_rect: Rect, state: &mut KeyboardState, first_key
     }
 }
 
-pub fn show_keyboard(ui: &mut egui::Ui, state: &mut KeyboardState, keys: &[u8]) {
+pub fn show_keyboard(ui: &mut egui::Ui, state: &mut KeyboardState, keys: &[u8], midi_write: &mpsc::Sender<MidiMessage>) {
     let size = ui.available_size();
     let (response, mut painter) = ui.allocate_painter(size, egui::Sense::drag());
 
     let keyboard_rect = Rect {
         min: Pos2 {
-            x: response.rect.min.x,// + BORDER_SIZE,
+            x: response.rect.min.x,
             y: response.rect.min.y + BORDER_SIZE,
         },
         max: Pos2 {
-            x: response.rect.max.x,// - BORDER_SIZE,
-            y: response.rect.max.y,
+            x: response.rect.max.x - 1.0,
+            y: response.rect.max.y - 1.0,
         }
     };
+    let top_border_rect = response.rect.clone().with_max_y(response.rect.max.y - 1.0);
 
     painter.rect_filled(response.rect, egui::CornerRadius::ZERO, BORDER_COLOR);
+    painter.rect_filled(top_border_rect, egui::CornerRadius::ZERO, TOP_BORDER_COLOR);
     painter.rect_filled(keyboard_rect, egui::CornerRadius::ZERO, Color32::WHITE);
 
     painter.shrink_clip_rect(keyboard_rect);
@@ -140,7 +156,7 @@ pub fn show_keyboard(ui: &mut egui::Ui, state: &mut KeyboardState, keys: &[u8]) 
     // draw pressed white keys
     for col in &state.collision {
         if col.black { continue; }
-        if col.rect.max.x > keyboard_rect.max.x { break; }
+        if col.rect.min.x > keyboard_rect.max.x { break; }
         if is_key_pressed(col.key, keys) {
             painter.rect_filled(col.rect, egui::CornerRadius::ZERO, PRESSED_KEY_COLOR);
         }
@@ -155,7 +171,7 @@ pub fn show_keyboard(ui: &mut egui::Ui, state: &mut KeyboardState, keys: &[u8]) 
 
     // draw black keys
     for col in &state.collision {
-        if col.rect.max.x > keyboard_rect.max.x {
+        if col.rect.min.x > keyboard_rect.max.x {
             break;
         }
         if col.black {
@@ -167,11 +183,27 @@ pub fn show_keyboard(ui: &mut egui::Ui, state: &mut KeyboardState, keys: &[u8]) 
         }
     }
 
-    if let Some(pointer_pos) = response.interact_pointer_pos() {
+    if response.drag_stopped() && let Some(pressing_key) = state.pressing_key {
+        send_note_event(midi_write, pressing_key, 0);
+        state.pressing_key = None;
+    }
+
+    if response.is_pointer_button_down_on() && let Some(pointer_pos) = response.interact_pointer_pos() {
+        let mut new_key = None;
         for col in &state.collision {
             if col.rect.contains(pointer_pos) {
-                println!("on key: {}", col.key);
+                new_key = Some(col.key);
                 break;
+            }
+        }
+        if new_key != state.pressing_key {
+            if let Some(pressing_key) = state.pressing_key {
+                send_note_event(midi_write, pressing_key, 0);
+                state.pressing_key = None;
+            }
+            if let Some(new_key) = new_key {
+                send_note_event(midi_write, new_key, 64);
+                state.pressing_key = Some(new_key);
             }
         }
     }

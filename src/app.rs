@@ -8,12 +8,12 @@ const DEFAULT_SLEEP_TIME: u64 = 5000;
 const DEFAULT_MIDI_PORTS: &[&str] = &[
     // MIDI inputs we'll try to connect to at startup (the actual port
     // name just has to contain the text here to be considered):
-    "SMK25-Master"
+    "SMK25",
 ];
 
 #[allow(dead_code)]
 pub struct KeySynthApp {
-    midi_write: mpsc::Sender<(u64, MidiMessage)>,
+    midi_write: mpsc::Sender<MidiMessage>,
     midi_command: Option<mpsc::Sender<MidiReaderCommand>>,
     midi_in: Option<midir::MidiInput>,
     synth: Synth,
@@ -27,6 +27,7 @@ impl KeySynthApp {
         let (midi_write, midi_read, midi_command, midi_in) = Self::open_midi();
 
         egui_extras::install_image_loaders(&cc.egui_ctx);
+        //cc.egui_ctx.set_theme(egui::ThemePreference::Light);
         cc.egui_ctx.set_zoom_factor(1.5);
         KeySynthApp {
             synth: Synth::start(midi_read, cc.egui_ctx.clone()),
@@ -39,13 +40,13 @@ impl KeySynthApp {
         }
     }
 
-    fn open_midi() -> (mpsc::Sender<(u64, MidiMessage)>, mpsc::Receiver<(u64, MidiMessage)>,
+    fn open_midi() -> (mpsc::Sender<MidiMessage>, mpsc::Receiver<MidiMessage>,
                        Option<mpsc::Sender<MidiReaderCommand>>, Option<midir::MidiInput>) {
         let midi_in = midir::MidiInput::new("MIDI portlist").ok();
         if let Ok(midi) = super::midi_reader::MidiReader::start(DEFAULT_SLEEP_TIME, DEFAULT_MIDI_PORTS) {
             (midi.write, midi.read, Some(midi.command), midi_in)
         } else {
-            let (write, read) = mpsc::channel::<(u64, MidiMessage)>();
+            let (write, read) = mpsc::channel::<MidiMessage>();
             (write, read, None, midi_in)
         }
     }
@@ -124,7 +125,7 @@ impl KeySynthApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             let mut keys = [0; 88];
             self.synth.copy_keys(&mut keys);
-            super::keyboard::show_keyboard(ui, &mut self.keyboard_state, &keys);
+            super::keyboard::show_keyboard(ui, &mut self.keyboard_state, &keys, &self.midi_write);
         });
     }
 }

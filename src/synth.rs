@@ -38,9 +38,9 @@ impl Synth {
         keys.clone_from_slice(&inner.keys);
     }
 
-    fn run(&self, midi_read: mpsc::Receiver<(u64, MidiMessage)>, frame: egui::Context) {
+    fn run(&self, midi_read: mpsc::Receiver<MidiMessage>, frame: egui::Context) {
         loop {
-            while let Ok((_stamp, msg)) = midi_read.try_recv() {
+            while let Ok(msg) = midi_read.try_recv() {
                 match msg {
                     MidiMessage::PortConnected => {
                         self.set_midi_connected(true);
@@ -66,7 +66,7 @@ impl Synth {
         }
     }
 
-    pub fn start(midi_read: mpsc::Receiver<(u64, MidiMessage)>, frame: egui::Context) -> Self {
+    pub fn start(midi_read: mpsc::Receiver<MidiMessage>, frame: egui::Context) -> Self {
         let synth = Synth {
             inner: Arc::new(Mutex::new(Inner {
                 keys: [0; 88],
