@@ -1,8 +1,6 @@
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-
 use super::midi_message::{MidiMessage, MidiKeyEvent};
 use super::synth_voice::{SynthVoice, SynthInstrument};
 
@@ -16,29 +14,22 @@ pub enum SynthKeyState {
     VoiceStolen,
 }
 
-#[allow(dead_code)]
-struct CpalSoundOutput {
-    host: cpal::Host,
-    device: cpal::Device,
-    stream: cpal::Stream,
-}
-
 //#[derive(Clone)]
-struct SynthInner {
-    voices: [SynthVoice; SynthInner::MAX_VOICES],
-    keys: [SynthKeyState; SynthInner::NUM_KEYS],
+pub struct SynthPlayer {
+    voices: [SynthVoice; SynthPlayer::MAX_VOICES],
+    keys: [SynthKeyState; SynthPlayer::NUM_KEYS],
     next_voice: usize,
     midi_connected: bool,
     volume: f32,
 }
 
-impl SynthInner {
+impl SynthPlayer {
     pub const MAX_VOICES: usize = 8;
     pub const NUM_KEYS: usize = 88;
 
     fn new() -> Self {
-        SynthInner {
-            voices: [SynthVoice::EMPTY; SynthInner::MAX_VOICES],
+        SynthPlayer {
+            voices: [SynthVoice::EMPTY; SynthPlayer::MAX_VOICES],
             keys: [SynthKeyState::Off; Self::NUM_KEYS],
             next_voice: 0,
             midi_connected: false,
@@ -104,105 +95,74 @@ impl SynthInner {
             voice.set_instrument(instrument);
         }
     }
+
+    pub fn gen_samples(&mut self, data: &mut [i16]) {
+        for voice in self.voices.iter_mut() {
+            if voice.active {
+                voice.gen_samples(data);
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
 pub struct SynthKeyboard {
-    inner: Arc<Mutex<SynthInner>>,
+    player: Arc<Mutex<SynthPlayer>>,
 }
 
 impl SynthKeyboard {
     #[allow(dead_code)]
-    pub const MAX_VOICES: usize = SynthInner::MAX_VOICES;
-    pub const NUM_KEYS: usize = SynthInner::NUM_KEYS;
+    pub const MAX_VOICES: usize = SynthPlayer::MAX_VOICES;
+    pub const NUM_KEYS: usize = SynthPlayer::NUM_KEYS;
 
     pub fn is_midi_connected(&self) -> bool {
-        self.inner.lock().unwrap().midi_connected
+        self.player.lock().unwrap().midi_connected
     }
 
     pub fn set_midi_connected(&self, connected: bool) {
-        self.inner.lock().unwrap().midi_connected = connected;
+        self.player.lock().unwrap().midi_connected = connected;
     }
 
     pub fn play_key(&self, key: u8, pressure: u8) {
         let key_index = key as usize;
         if key_index >= Self::NUM_KEYS { return; }
-        let mut inner = self.inner.lock().unwrap();
-        inner.play_key(key, pressure);
+        let mut player = self.player.lock().unwrap();
+        player.play_key(key, pressure);
     }
 
     pub fn stop_key(&self, key: u8) {
         let key_index = key as usize;
         if key_index >= Self::NUM_KEYS { return; }
-        let mut inner = self.inner.lock().unwrap();
-        inner.stop_key(key);
+        let mut player = self.player.lock().unwrap();
+        player.stop_key(key);
     }
 
     pub fn copy_keys(&self, keys: &mut [SynthKeyState]) {
         if keys.len() != Self::NUM_KEYS { return; }
-        let inner = self.inner.lock().unwrap();
-        keys.clone_from_slice(&inner.keys);
+        let player = self.player.lock().unwrap();
+        keys.clone_from_slice(&player.keys);
     }
 
     pub fn set_instrument(&self, instrument: SynthInstrument) {
-        let mut inner = self.inner.lock().unwrap();
-        inner.set_instrument(instrument);
+        let mut player = self.player.lock().unwrap();
+        player.set_instrument(instrument);
     }
 
     pub fn get_volume(&self) -> f32 {
-        let inner = self.inner.lock().unwrap();
-        inner.volume
+        let player = self.player.lock().unwrap();
+        player.volume
     }
 
     pub fn set_volume(&self, volume: f32) {
-        let mut inner = self.inner.lock().unwrap();
-        inner.volume = volume;
+        let mut player = self.player.lock().unwrap();
+        player.volume = volume;
     }
 
-    fn open_sound_out(&self) -> Option<CpalSoundOutput> {
-        let host = cpal::default_host();
-        let device = host.default_output_device()?;
-        let supported_config_range = device.supported_output_configs().ok()?.find(|range| {
-            matches!(range.sample_format(), cpal::SampleFormat::I16) &&
-                range.channels() == 1 &&
-                range.min_sample_rate().0 <= SynthVoice::SAMPLE_RATE &&
-                range.max_sample_rate().0 >= SynthVoice::SAMPLE_RATE &&
-                matches!(range.buffer_size(), cpal::SupportedBufferSize::Range{
-                    min: 0..=SynthVoice::BUFFER_SIZE,
-                    max:SynthVoice::BUFFER_SIZE..=u32::MAX
-                })
-        });
-        let mut config = supported_config_range?.try_with_sample_rate(cpal::SampleRate(SynthVoice::SAMPLE_RATE))?.config();
-        config.buffer_size = cpal::BufferSize::Fixed(SynthVoice::BUFFER_SIZE);
-
-        let synth_inner = self.inner.clone();
-        let stream = device.build_output_stream(
-            &config,
-            move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
-                for spl in data.iter_mut() {
-                    *spl = 0;
-                }
-                let mut inner = synth_inner.lock().unwrap();
-                for voice in inner.voices.iter_mut() {
-                    if voice.active {
-                        voice.gen_samples(data);
-                    }
-                }
-            },
-            move |err| { println!("CPAL error: {}", err); },
-            None).ok()?;
-        stream.play().ok()?;
-
-        Some(CpalSoundOutput {
-            host,
-            device,
-            stream,
-        })
+    pub fn get_player(&self) -> Arc<Mutex<SynthPlayer>> {
+        self.player.clone()
     }
 
     fn run(&self, midi_read: mpsc::Receiver<MidiMessage>, egui_ctx: egui::Context) {
-        let _sound_out = self.open_sound_out();
-
         loop {
             while let Ok(msg) = midi_read.try_recv() {
                 match msg {
@@ -231,14 +191,14 @@ impl SynthKeyboard {
     }
 
     pub fn start(midi_read: mpsc::Receiver<MidiMessage>, egui_ctx: egui::Context) -> Self {
-        let sound_writer = SynthKeyboard {
-            inner: Arc::new(Mutex::new(SynthInner::new())),
+        let synth = SynthKeyboard {
+            player: Arc::new(Mutex::new(SynthPlayer::new())),
         };
 
-        let sw = sound_writer.clone();
+        let synth_clone = synth.clone();
         thread::spawn(move || {
-            sw.run(midi_read, egui_ctx);
+            synth_clone.run(midi_read, egui_ctx);
         });
-        sound_writer
+        synth
     }
 }

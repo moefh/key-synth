@@ -57,7 +57,7 @@ pub struct SynthVoice {
 }
 
 impl SynthVoice {
-    pub const SAMPLE_RATE: u32 = 48000;
+    pub const SAMPLE_RATE: u32 = 44100;
     pub const BUFFER_SIZE: u32 = 1024;
     pub const EMPTY: SynthVoice = SynthVoice {
         active: false,
@@ -95,8 +95,8 @@ impl SynthVoice {
 
     fn update_overtones(&mut self) {
         for (i, overtone) in self.overtones.iter_mut().enumerate() {
-            (*overtone).0 = self.instrument.overtones[i].frequency * self.freq;
-            (*overtone).1 = self.instrument.overtones[i].loudness;
+            overtone.0 = self.instrument.overtones[i].frequency * self.freq;
+            overtone.1 = self.instrument.overtones[i].loudness;
         }
     }
 

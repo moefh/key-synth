@@ -3,7 +3,8 @@ use std::sync::mpsc;
 use super::midi_message::MidiMessage;
 use super::midi_reader::{MidiReaderCommand, MidiReaderConfigAcceptedPorts};
 use super::synth::SynthKeyboard;
-use super::synth_voice::SynthInstrument;
+use super::synth_voice::{SynthInstrument, SynthVoice};
+use super::audio_writer::AudioWriter;
 
 const DEFAULT_SLEEP_TIME: u64 = 5000;
 const DEFAULT_MIDI_PORTS: &[&str] = &[
@@ -13,6 +14,8 @@ const DEFAULT_MIDI_PORTS: &[&str] = &[
 ];
 
 pub struct KeySynthApp {
+    _audio_writer: Option<AudioWriter>, // never used, but must be kept alive
+    audio_error: Option<String>,
     midi_write: mpsc::Sender<MidiMessage>,
     reader_command: Option<mpsc::Sender<MidiReaderCommand>>,
     midi_ports: Option<super::midi_ports::MidiPorts>,
@@ -35,12 +38,22 @@ impl KeySynthApp {
         // The synth reads midi messages from `midi_read` and
         // generates sound as appropriate.
         let synth = SynthKeyboard::start(midi_read, cc.egui_ctx.clone());
+
+        // The audio writer requests samples from the synth and
+        // sends audio to the output device.
+        let (_audio_writer, audio_error) = match AudioWriter::start(SynthVoice::SAMPLE_RATE, SynthVoice::BUFFER_SIZE, synth.get_player()) {
+            Ok(audio_writer) => (Some(audio_writer), None),
+            Err(e) => (None, Some(e.to_string())),
+        };
+
         let volume = synth.get_volume();
 
         egui_extras::install_image_loaders(&cc.egui_ctx);
         //cc.egui_ctx.set_theme(egui::ThemePreference::Light);
         cc.egui_ctx.set_zoom_factor(1.5);
         KeySynthApp {
+            _audio_writer,
+            audio_error,
             synth,
             midi_write,
             reader_command,
@@ -131,12 +144,22 @@ impl KeySynthApp {
             });
         });
     }
+
+    fn update_audio_error(&self, ctx: &egui::Context, error_message: &str) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.label(format!("Error opening audio output: {}", error_message));
+        });
+    }
 }
 
 impl eframe::App for KeySynthApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.update_menu(ctx);
-        self.update_footer(ctx);
-        self.update_central_panel(ctx);
+        if let Some(error_message) = &self.audio_error {
+            self.update_audio_error(ctx, error_message);
+        } else {
+            self.update_menu(ctx);
+            self.update_footer(ctx);
+            self.update_central_panel(ctx);
+        }
     }
 }
