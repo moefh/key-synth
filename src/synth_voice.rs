@@ -79,12 +79,12 @@ impl SynthVoice {
         440.0 * 2.0_f32.powf((note - 69) as f32 / 12.0)
     }
 
-    pub fn start(&mut self, key: u8, pressure: u8) {
+    pub fn start(&mut self, key: u8, pressure: u8, volume: f32) {
         self.key = key;
         self.active = true;
         self.stopping = false;
         self.tick = 0.0;
-        self.volume = pressure as f32 / 127.0;
+        self.volume = pressure as f32 / 127.0 * volume;
         self.freq = Self::get_midi_note_frequency(key as i32);
         self.update_overtones();
     }

@@ -18,6 +18,7 @@ pub struct KeySynthApp {
     midi_ports: Option<super::midi_ports::MidiPorts>,
     synth: SynthKeyboard,
     keyboard_state: super::keyboard::KeyboardState,
+    volume: f32,
 }
 
 impl KeySynthApp {
@@ -34,6 +35,7 @@ impl KeySynthApp {
         // The synth reads midi messages from `midi_read` and
         // generates sound as appropriate.
         let synth = SynthKeyboard::start(midi_read, cc.egui_ctx.clone());
+        let volume = synth.get_volume();
 
         egui_extras::install_image_loaders(&cc.egui_ctx);
         //cc.egui_ctx.set_theme(egui::ThemePreference::Light);
@@ -44,6 +46,7 @@ impl KeySynthApp {
             reader_command,
             midi_ports: super::midi_ports::MidiPorts::open(),
             keyboard_state: super::keyboard::KeyboardState::new(),
+            volume,
         }
     }
 
@@ -113,9 +116,19 @@ impl KeySynthApp {
 
     fn update_central_panel(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            let mut keys = [super::synth::SynthKeyState::Off; 88];
-            self.synth.copy_keys(&mut keys);
-            super::keyboard::show_keyboard(ui, &mut self.keyboard_state, &keys, &self.midi_write);
+            ui.horizontal_centered(|ui| {
+                ui.spacing_mut().slider_width = ui.available_height();
+                let mut volume = self.volume;
+                ui.add(egui::Slider::new(&mut volume, 0.0..=1.0).show_value(false).vertical());
+                if self.volume != volume {
+                    self.volume = volume;
+                    self.synth.set_volume(self.volume);
+                }
+
+                let mut keys = [super::synth::SynthKeyState::Off; 88];
+                self.synth.copy_keys(&mut keys);
+                super::keyboard::show_keyboard(ui, &mut self.keyboard_state, &keys, &self.midi_write);
+            });
         });
     }
 }

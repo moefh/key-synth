@@ -29,6 +29,7 @@ struct SynthInner {
     keys: [SynthKeyState; SynthInner::NUM_KEYS],
     next_voice: usize,
     midi_connected: bool,
+    volume: f32,
 }
 
 impl SynthInner {
@@ -41,6 +42,7 @@ impl SynthInner {
             keys: [SynthKeyState::Off; Self::NUM_KEYS],
             next_voice: 0,
             midi_connected: false,
+            volume: 0.7,
         }
     }
 
@@ -69,7 +71,7 @@ impl SynthInner {
 
         // if this key is already playing, just start it again
         if let SynthKeyState::Playing(SynthVoiceIndex(voice_index)) = self.keys[key_index] {
-            self.voices[voice_index].start(key, pressure);
+            self.voices[voice_index].start(key, pressure, self.volume);
             return;
         }
 
@@ -85,7 +87,7 @@ impl SynthInner {
         }
 
         // start playing the new voice
-        self.voices[voice_index].start(key, pressure);
+        self.voices[voice_index].start(key, pressure, self.volume);
         self.keys[key_index] = SynthKeyState::Playing(SynthVoiceIndex(voice_index));
     }
 
@@ -145,6 +147,16 @@ impl SynthKeyboard {
     pub fn set_instrument(&self, instrument: SynthInstrument) {
         let mut inner = self.inner.lock().unwrap();
         inner.set_instrument(instrument);
+    }
+
+    pub fn get_volume(&self) -> f32 {
+        let inner = self.inner.lock().unwrap();
+        inner.volume
+    }
+
+    pub fn set_volume(&self, volume: f32) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.volume = volume;
     }
 
     fn open_sound_out(&self) -> Option<CpalSoundOutput> {
