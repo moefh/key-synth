@@ -4,7 +4,7 @@ use std::thread;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use super::midi_message::{MidiMessage, MidiKeyEvent};
-use super::synth_voice::SynthVoice;
+use super::synth_voice::{SynthVoice, SynthInstrument};
 
 #[derive(Clone, Copy, Debug)]
 pub struct SynthVoiceIndex(usize);
@@ -23,7 +23,7 @@ struct CpalSoundOutput {
     stream: cpal::Stream,
 }
 
-#[derive(Clone)]
+//#[derive(Clone)]
 struct SynthInner {
     voices: [SynthVoice; SynthInner::MAX_VOICES],
     keys: [SynthKeyState; SynthInner::NUM_KEYS],
@@ -37,7 +37,7 @@ impl SynthInner {
 
     fn new() -> Self {
         SynthInner {
-            voices: [SynthVoice::EMPTY; Self::MAX_VOICES],
+            voices: [SynthVoice::EMPTY; SynthInner::MAX_VOICES],
             keys: [SynthKeyState::Off; Self::NUM_KEYS],
             next_voice: 0,
             midi_connected: false,
@@ -96,6 +96,12 @@ impl SynthInner {
         }
         self.keys[key_index] = SynthKeyState::Off;
     }
+
+    fn set_instrument(&mut self, instrument: SynthInstrument) {
+        for voice in self.voices.iter_mut() {
+            voice.set_instrument(instrument);
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -134,6 +140,11 @@ impl SynthKeyboard {
         if keys.len() != Self::NUM_KEYS { return; }
         let inner = self.inner.lock().unwrap();
         keys.clone_from_slice(&inner.keys);
+    }
+
+    pub fn set_instrument(&self, instrument: SynthInstrument) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.set_instrument(instrument);
     }
 
     fn open_sound_out(&self) -> Option<CpalSoundOutput> {

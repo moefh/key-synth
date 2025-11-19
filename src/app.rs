@@ -3,6 +3,7 @@ use std::sync::mpsc;
 use super::midi_message::MidiMessage;
 use super::midi_reader::{MidiReaderCommand, MidiReaderConfigAcceptedPorts};
 use super::synth::SynthKeyboard;
+use super::synth_voice::SynthInstrument;
 
 const DEFAULT_SLEEP_TIME: u64 = 5000;
 const DEFAULT_MIDI_PORTS: &[&str] = &[
@@ -68,6 +69,16 @@ impl KeySynthApp {
             }
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("Synth", |ui| {
+                    if ui.button("Piano").clicked() {
+                        self.synth.set_instrument(SynthInstrument::PIANO);
+                    }
+                    if ui.button("Vibraphone").clicked() {
+                        self.synth.set_instrument(SynthInstrument::VIBRAPHONE);
+                    }
+                    if ui.button("Bell").clicked() {
+                        self.synth.set_instrument(SynthInstrument::BELL);
+                    }
+                    ui.separator();
                     if ui.button("Quit").clicked() {
                         self.close_midi_reader();
                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);

@@ -196,13 +196,7 @@ pub fn show_keyboard(ui: &mut egui::Ui, state: &mut KeyboardState, keys: &[Synth
     }
 
     if response.is_pointer_button_down_on() && let Some(pointer_pos) = response.interact_pointer_pos() {
-        let mut new_key = None;
-        for col in &state.collision {
-            if col.rect.contains(pointer_pos) {
-                new_key = Some(col.key);
-                break;
-            }
-        }
+        let new_key = state.collision.iter().find(|col| col.rect.contains(pointer_pos)).map(|col| col.key);
         if new_key != state.pressing_key {
             if let Some(pressing_key) = state.pressing_key {
                 send_note_event(midi_write, pressing_key, 0);
