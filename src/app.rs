@@ -43,7 +43,7 @@ impl KeySynthApp {
         // sends audio to the output device.
         let (_audio_writer, audio_error) = match AudioWriter::start(SynthVoice::SAMPLE_RATE, SynthVoice::BUFFER_SIZE, synth.get_player()) {
             Ok(audio_writer) => (Some(audio_writer), None),
-            Err(e) => (None, Some(e.to_string())),
+            Err(e) => (None, Some(format!("Error setting up audio output: {}", e))),
         };
 
         let volume = synth.get_volume();
@@ -147,7 +147,11 @@ impl KeySynthApp {
 
     fn update_audio_error(&self, ctx: &egui::Context, error_message: &str) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.label(format!("Error opening audio output: {}", error_message));
+            egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
+                ui.with_layout(egui::Layout::top_down(egui::Align::LEFT).with_cross_justify(true), |ui| {
+                    ui.label(error_message);
+                });
+            });
         });
     }
 }

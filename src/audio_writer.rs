@@ -13,6 +13,20 @@ pub struct AudioWriter {
 }
 
 impl AudioWriter {
+    fn read_supported_output_configs(device: &cpal::Device) -> String {
+        let configs_iter = device.supported_output_configs();
+        match configs_iter {
+            Ok(configs) => {
+                let mut s = String::new();
+                for config in configs {
+                    s.push_str(&format!("-> {:?}\n", config));
+                }
+                s
+            }
+            Err(e) => e.to_string()
+        }
+    }
+
     pub fn start(sample_rate: u32, buffer_size: u32, player: Arc<Mutex<SynthPlayer>>) -> Result<Self, Box<dyn Error>> {
         let host = cpal::default_host();
         let device = host.default_output_device().ok_or_else(|| {
@@ -20,7 +34,7 @@ impl AudioWriter {
         })?;
         let supported_config_range = device.supported_output_configs()?.find(|range| {
             if matches!(range.sample_format(), cpal::SampleFormat::I16) &&
-                range.channels() == 1 &&
+                range.channels() == 2 &&
                 range.min_sample_rate().0 <= sample_rate &&
                 range.max_sample_rate().0 >= sample_rate &&
                 let cpal::SupportedBufferSize::Range{ min: min_buffer_size, max: max_buffer_size } = range.buffer_size() &&
@@ -32,7 +46,8 @@ impl AudioWriter {
                 }
         });
         let mut config = supported_config_range.ok_or_else(|| {
-            std::io::Error::other("no suitable sound config found")
+            std::io::Error::other(format!("no suitable config found.\nSupported configs:\n{}",
+                                          Self::read_supported_output_configs(&device)))
         })?.try_with_sample_rate(cpal::SampleRate(sample_rate)).ok_or_else(|| {
             std::io::Error::other("buffer size not supported")
         })?.config();

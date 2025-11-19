@@ -13,7 +13,7 @@ pub struct SynthInstrument {
 impl SynthInstrument {
     const NUM_OVERTONES: usize = 5;
     pub const PIANO: Self = SynthInstrument {
-        decay: 0.99,
+        decay: 0.95,
         overtones: [
             SynthInstrumentOvertone { frequency: 1.00, loudness: 1.0 },
             SynthInstrumentOvertone { frequency: 2.00, loudness: 0.5 },
@@ -23,7 +23,7 @@ impl SynthInstrument {
         ]
     };
     pub const VIBRAPHONE: Self = SynthInstrument {
-        decay: 0.98,
+        decay: 0.90,
         overtones: [
             SynthInstrumentOvertone { frequency: 1.00, loudness: 0.8 },
             SynthInstrumentOvertone { frequency: 2.00, loudness: 0.0 },
@@ -33,7 +33,7 @@ impl SynthInstrument {
         ]
     };
     pub const BELL: Self = SynthInstrument {
-        decay: 0.99,
+        decay: 0.95,
         overtones: [
             SynthInstrumentOvertone { frequency: 1.0, loudness: 1.0 },
             SynthInstrumentOvertone { frequency: 2.2, loudness: 0.6 },
@@ -53,11 +53,12 @@ pub struct SynthVoice {
     pub volume: f32,
     pub tick: f32,
     pub instrument: SynthInstrument,
+    pub log_decay: f32,
     overtones: [(f32, f32); SynthInstrument::NUM_OVERTONES],
 }
 
 impl SynthVoice {
-    pub const SAMPLE_RATE: u32 = 44100;
+    pub const SAMPLE_RATE: u32 = 48000;
     pub const BUFFER_SIZE: u32 = 1024;
     pub const EMPTY: SynthVoice = SynthVoice {
         active: false,
@@ -66,6 +67,7 @@ impl SynthVoice {
         freq: 0.0,
         volume: 0.0,
         tick: 0.0,
+        log_decay: 0.0,
         instrument: SynthInstrument::PIANO,
         overtones: [(0.0, 0.0); SynthInstrument::NUM_OVERTONES],
     };
@@ -86,14 +88,15 @@ impl SynthVoice {
         self.tick = 0.0;
         self.volume = pressure as f32 / 127.0 * volume;
         self.freq = Self::get_midi_note_frequency(key as i32);
-        self.update_overtones();
+        self.update_instrument();
     }
 
     pub fn stop(&mut self) {
         self.stopping = true;
     }
 
-    fn update_overtones(&mut self) {
+    fn update_instrument(&mut self) {
+        self.log_decay = self.instrument.decay.ln();
         for (i, overtone) in self.overtones.iter_mut().enumerate() {
             overtone.0 = self.instrument.overtones[i].frequency * self.freq;
             overtone.1 = self.instrument.overtones[i].loudness;
@@ -102,22 +105,23 @@ impl SynthVoice {
 
     pub fn set_instrument(&mut self, instrument: SynthInstrument) {
         self.instrument = instrument;
-        self.update_overtones();
+        self.update_instrument();
     }
 
     pub fn gen_samples(&mut self, data: &mut [i16]) {
         let mut t = self.tick;
-        //let freq = self.freq;
         let mut volume = self.volume;
         let stopping = self.stopping;
         let vol_delta = if stopping { -volume / data.len() as f32 } else { 0.0 };
         let overtones = &self.overtones;
-        for spl in data.iter_mut() {
+        for spl in data.chunks_exact_mut(2) {
             let mut val = 0.0;
             for (freq, mult) in overtones {
                 val += (t * std::f32::consts::TAU / Self::SAMPLE_RATE as f32 * freq).sin() * mult * 3000.0 * volume;
             }
-            *spl = (*spl).saturating_add(val.clamp(i16::MIN as f32, i16::MAX as f32).round() as i16);
+            let ival = val.clamp(i16::MIN as f32, i16::MAX as f32).round() as i16;
+            spl[0] = spl[0].saturating_add(ival);
+            spl[1] = spl[1].saturating_add(ival);
             t += 1.0;
             volume += vol_delta;
         }
@@ -125,7 +129,8 @@ impl SynthVoice {
         if stopping {
             self.active = false;
         } else {
-            self.volume *= self.instrument.decay;
+            //self.volume *= self.instrument.decay;
+            self.volume *= (data.len() as f32 / 2048.0 * self.log_decay).exp();
         }
     }
 }
