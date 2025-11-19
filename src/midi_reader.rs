@@ -65,29 +65,30 @@ impl MidiConnector {
         let sleep_time = std::time::Duration::from_millis(self.sleep_time_millis);
 
         // select input port
-        let (in_port, in_port_name) = match self.select_midi_in_port(&data.midi_in) {
-            Ok(v) => v,
-            Err(_) => {
-                match self.command_receiver.recv_timeout(sleep_time) {
-                    Ok(MidiReaderCommand::Close) | Err(mpsc::RecvTimeoutError::Disconnected) => {
-                        return MidiReaderData {
-                            midi_in: data.midi_in,
-                            stop: true,     // stop trying to connect, exit midi reader
-                        };
-                    }
+        let (in_port, in_port_name) = loop {
+            match self.select_midi_in_port(&data.midi_in) {
+                Ok(v) => break v,
+                Err(_) => {
+                    // error selecting port, sleep and check for commands
+                    match self.command_receiver.recv_timeout(sleep_time) {
+                        Ok(MidiReaderCommand::Close) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                            return MidiReaderData {
+                                midi_in: data.midi_in,
+                                stop: true,     // stop trying to connect, exit midi reader
+                            };
+                        }
 
-                    Ok(MidiReaderCommand::ConfigAcceptedPorts(cfg)) => {
-                        self.accepted_midi_ports = cfg.accepted_midi_ports;
-                        return data;
-                    }
+                        Ok(MidiReaderCommand::ConfigAcceptedPorts(cfg)) => {
+                            self.accepted_midi_ports = cfg.accepted_midi_ports;
+                        }
 
-                    Ok(MidiReaderCommand::ConfigSleepTime(cfg)) => {
-                        self.sleep_time_millis = cfg.sleep_time_millis;
-                        return data;
-                    }
+                        Ok(MidiReaderCommand::ConfigSleepTime(cfg)) => {
+                            self.sleep_time_millis = cfg.sleep_time_millis;
+                        }
 
-                    Err(mpsc::RecvTimeoutError::Timeout) => {
-                        return data;
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            // keep trying to select port
+                        }
                     }
                 }
             }
@@ -99,9 +100,9 @@ impl MidiConnector {
             "midir-read-input",
             move |_stamp, message, midi_sender| {
                 //println!("data: {:x?}", message);
-                let midi_msg = MidiMessage::decode(message);
-                if let Err(e) = midi_sender.send(midi_msg) {
-                    println!("ERROR sending message: {}", e);
+                let midi_message = MidiMessage::decode(message);
+                if let Err(e) = midi_sender.send(midi_message) {
+                    println!("ERROR sending MIDI message: {}", e);
                 }
             },
             self.midi_sender.clone()
@@ -122,8 +123,8 @@ impl MidiConnector {
             }
         };
 
+        // read commands and monitor the input ports (to check if the selected input port still exists)
         loop {
-            // sleep and read commands
             match self.command_receiver.recv_timeout(sleep_time) {
                 Ok(MidiReaderCommand::Close) | Err(mpsc::RecvTimeoutError::Disconnected) => {
                     // disconnect and exit midi reader
@@ -179,35 +180,23 @@ impl MidiConnector {
     }
 }
 
-pub struct MidiReader {
-    pub write: mpsc::Sender<MidiMessage>,
-    pub read: mpsc::Receiver<MidiMessage>,
-    pub command: mpsc::Sender<MidiReaderCommand>,
-}
+pub fn start(sleep_time_millis: u64, accepted_midi_ports: &[&str], midi_sender: mpsc::Sender<MidiMessage>)
+             -> Result<mpsc::Sender<MidiReaderCommand>, Box<dyn Error>> {
+    let midi_check = MidiInput::new("MIDI check")?;
+    let midi_in = MidiInput::new("MIDI in")?;
+    let (command_sender, command_receiver) = mpsc::channel::<MidiReaderCommand>();
 
-impl MidiReader {
-    pub fn start(sleep_time_millis: u64, accepted_midi_ports: &[&str]) -> Result<Self, Box<dyn Error>> {
-        let midi_check = MidiInput::new("MIDI check")?;
-        let midi_in = MidiInput::new("MIDI in")?;
-        let (midi_sender, midi_receiver) = mpsc::channel::<MidiMessage>();
-        let (command_sender, command_receiver) = mpsc::channel::<MidiReaderCommand>();
+    let mut connector = MidiConnector {
+        sleep_time_millis,
+        accepted_midi_ports: accepted_midi_ports.iter().map(|s| (*s).to_owned()).collect(),
+        midi_check,
+        midi_sender,
+        command_receiver,
+        connected_port_name: None,
+    };
+    std::thread::spawn(move || {
+        connector.run(midi_in);
+    });
 
-        let mut connector = MidiConnector {
-            sleep_time_millis,
-            accepted_midi_ports: accepted_midi_ports.iter().map(|s| (*s).to_owned()).collect(),
-            midi_check,
-            midi_sender: midi_sender.clone(),
-            command_receiver,
-            connected_port_name: None,
-        };
-        std::thread::spawn(move || {
-            connector.run(midi_in);
-        });
-
-        Ok(MidiReader {
-            read: midi_receiver,
-            write: midi_sender,
-            command: command_sender,
-        })
-    }
+    Ok(command_sender)
 }

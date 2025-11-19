@@ -1,6 +1,8 @@
 mod midi_message;
 mod midi_reader;
+mod midi_ports;
 mod synth;
+mod synth_voice;
 mod keyboard;
 mod app;
 

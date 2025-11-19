@@ -1,12 +1,14 @@
 use std::sync::mpsc;
-use egui::{Rect, Pos2, Color32};
+use egui::{Rect, Pos2, Vec2, Color32};
 
 use super::midi_message::{MidiMessage, MidiKeyEvent};
+use super::synth::SynthKeyState;
 
 const BORDER_SIZE: f32 = 4.0;
 const BORDER_COLOR: Color32 = Color32::BLACK;
 const TOP_BORDER_COLOR: Color32 = Color32::from_rgb(96,0,0);
 const PRESSED_KEY_COLOR: Color32 = Color32::from_rgb(64, 128, 255);
+const STOLEN_KEY_COLOR: Color32 = Color32::from_rgb(255, 128, 64);
 
 struct KeyCollision {
     key: usize,
@@ -36,8 +38,8 @@ fn send_note_event(midi_write: &mpsc::Sender<MidiMessage>, key: usize, pressure:
     }
 }
 
-fn is_key_pressed(key: usize, keys: &[u8]) -> bool {
-    keys.get(key).copied().unwrap_or(0) != 0
+fn get_key_state(key: usize, keys: &[SynthKeyState]) -> SynthKeyState {
+    keys.get(key).copied().unwrap_or(SynthKeyState::Off)
 }
 
 /*
@@ -128,21 +130,18 @@ fn build_key_collision(keyboard_rect: Rect, state: &mut KeyboardState, first_key
     }
 }
 
-pub fn show_keyboard(ui: &mut egui::Ui, state: &mut KeyboardState, keys: &[u8], midi_write: &mpsc::Sender<MidiMessage>) {
+pub fn show_keyboard(ui: &mut egui::Ui, state: &mut KeyboardState, keys: &[SynthKeyState], midi_write: &mpsc::Sender<MidiMessage>) {
     let size = ui.available_size();
     let (response, mut painter) = ui.allocate_painter(size, egui::Sense::drag());
 
     let keyboard_rect = Rect {
-        min: Pos2 {
-            x: response.rect.min.x,
-            y: response.rect.min.y + BORDER_SIZE,
-        },
-        max: Pos2 {
-            x: response.rect.max.x - 1.0,
-            y: response.rect.max.y - 1.0,
-        }
+        min: response.rect.min + Vec2::new(0.0, BORDER_SIZE),
+        max: response.rect.max - Vec2::splat(1.0),
     };
-    let top_border_rect = response.rect.clone().with_max_y(response.rect.max.y - 1.0);
+    let top_border_rect = Rect {
+        min: response.rect.min,
+        max: Pos2::new(response.rect.max.x, response.rect.max.y - 1.0)
+    };
 
     painter.rect_filled(response.rect, egui::CornerRadius::ZERO, BORDER_COLOR);
     painter.rect_filled(top_border_rect, egui::CornerRadius::ZERO, TOP_BORDER_COLOR);
@@ -157,8 +156,10 @@ pub fn show_keyboard(ui: &mut egui::Ui, state: &mut KeyboardState, keys: &[u8], 
     for col in &state.collision {
         if col.black { continue; }
         if col.rect.min.x > keyboard_rect.max.x { break; }
-        if is_key_pressed(col.key, keys) {
-            painter.rect_filled(col.rect, egui::CornerRadius::ZERO, PRESSED_KEY_COLOR);
+        match get_key_state(col.key, keys) {
+            SynthKeyState::Playing(..) => { painter.rect_filled(col.rect, egui::CornerRadius::ZERO, PRESSED_KEY_COLOR); }
+            SynthKeyState::VoiceStolen => { painter.rect_filled(col.rect, egui::CornerRadius::ZERO, STOLEN_KEY_COLOR); }
+            _ => {}
         }
     }
 
@@ -175,10 +176,16 @@ pub fn show_keyboard(ui: &mut egui::Ui, state: &mut KeyboardState, keys: &[u8], 
             break;
         }
         if col.black {
-            if is_key_pressed(col.key, keys) {
-                painter.rect(col.rect, egui::CornerRadius::ZERO, PRESSED_KEY_COLOR, stroke, egui::StrokeKind::Inside);
-            } else {
-                painter.rect_filled(col.rect, egui::CornerRadius::ZERO, Color32::BLACK);
+            match get_key_state(col.key, keys) {
+                SynthKeyState::Playing(..) => {
+                    painter.rect(col.rect, egui::CornerRadius::ZERO, PRESSED_KEY_COLOR, stroke, egui::StrokeKind::Inside);
+                }
+                SynthKeyState::VoiceStolen => {
+                    painter.rect(col.rect, egui::CornerRadius::ZERO, STOLEN_KEY_COLOR, stroke, egui::StrokeKind::Inside);
+                }
+                SynthKeyState::Off => {
+                    painter.rect_filled(col.rect, egui::CornerRadius::ZERO, Color32::BLACK);
+                }
             }
         }
     }
