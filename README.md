@@ -1,4 +1,4 @@
-# raven-game-editor
+# key-synth
 
 Small keyboard synth written in Rust using
 [midir](https://crates.io/crates/midir) to read MIDI input,
