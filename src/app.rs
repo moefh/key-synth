@@ -3,19 +3,11 @@ use std::sync::mpsc;
 use super::midi_message::MidiMessage;
 use super::midi_reader::{MidiReaderCommand, MidiReaderConfigAcceptedPorts};
 use super::synth::SynthKeyboard;
-use super::synth_voice::{SynthInstrument, SynthVoice};
+use super::synth_voice::SynthInstrument;
 use super::audio_writer::AudioWriter;
 
-const DEFAULT_SLEEP_TIME: u64 = 5000;
-const DEFAULT_MIDI_PORTS: &[&str] = &[
-    // MIDI inputs we'll try to connect to at startup (the actual port
-    // name just has to contain the text here to be considered):
-    "SMK25",
-];
-
 pub struct KeySynthApp {
-    _audio_writer: Option<AudioWriter>, // never used, but must be kept alive
-    audio_error: Option<String>,
+    _audio_writer: AudioWriter, // never used, but must be kept alive
     midi_write: mpsc::Sender<MidiMessage>,
     reader_command: Option<mpsc::Sender<MidiReaderCommand>>,
     midi_ports: Option<super::midi_ports::MidiPorts>,
@@ -25,35 +17,21 @@ pub struct KeySynthApp {
 }
 
 impl KeySynthApp {
-    pub fn new(cc: &eframe::CreationContext) -> Self {
-        // MIDI messages are written to `midi_write` by the UI and the
-        // midi reader, and read from `midi_read` by the synth.
-        let (midi_write, midi_read) = mpsc::channel::<MidiMessage>();
+    pub fn new(cc: &eframe::CreationContext,
+               mut audio_writer: AudioWriter,
+               midi_read: mpsc::Receiver<MidiMessage>,
+               midi_write: mpsc::Sender<MidiMessage>,
+               reader_command: Option<mpsc::Sender<MidiReaderCommand>>) -> Self {
 
-        // The midi reader receives events from the selected MIDI IN
-        // port and writes midi messages to `midi_write`.  We control
-        // it (configure/stop) by writing comands to `reader_command`.
-        let reader_command = super::midi_reader::start(DEFAULT_SLEEP_TIME, DEFAULT_MIDI_PORTS, midi_write.clone()).ok();
-
-        // The synth reads midi messages from `midi_read` and
-        // generates sound as appropriate.
-        let synth = SynthKeyboard::start(midi_read, cc.egui_ctx.clone());
-
-        // The audio writer requests samples from the synth and
-        // sends audio to the output device.
-        let (_audio_writer, audio_error) = match AudioWriter::start(SynthVoice::SAMPLE_RATE, SynthVoice::BUFFER_SIZE, synth.get_player()) {
-            Ok(audio_writer) => (Some(audio_writer), None),
-            Err(e) => (None, Some(format!("Error setting up audio output: {}", e))),
-        };
-
+        let synth = SynthKeyboard::start(midi_read, cc.egui_ctx.clone(), audio_writer.num_channels, audio_writer.sample_rate);
         let volume = synth.get_volume();
+        audio_writer.start(synth.get_player()).unwrap_or(());
 
         egui_extras::install_image_loaders(&cc.egui_ctx);
         //cc.egui_ctx.set_theme(egui::ThemePreference::Light);
         cc.egui_ctx.set_zoom_factor(1.5);
         KeySynthApp {
-            _audio_writer,
-            audio_error,
+            _audio_writer: audio_writer,
             synth,
             midi_write,
             reader_command,
@@ -144,26 +122,12 @@ impl KeySynthApp {
             });
         });
     }
-
-    fn update_audio_error(&self, ctx: &egui::Context, error_message: &str) {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
-                ui.with_layout(egui::Layout::top_down(egui::Align::LEFT).with_cross_justify(true), |ui| {
-                    ui.label(error_message);
-                });
-            });
-        });
-    }
 }
 
 impl eframe::App for KeySynthApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if let Some(error_message) = &self.audio_error {
-            self.update_audio_error(ctx, error_message);
-        } else {
-            self.update_menu(ctx);
-            self.update_footer(ctx);
-            self.update_central_panel(ctx);
-        }
+        self.update_menu(ctx);
+        self.update_footer(ctx);
+        self.update_central_panel(ctx);
     }
 }

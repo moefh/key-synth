@@ -46,6 +46,8 @@ impl SynthInstrument {
 
 #[derive(Clone, Copy)]
 pub struct SynthVoice {
+    pub sample_rate: f32,
+    pub num_channels: usize,
     pub active: bool,
     pub stopping: bool,
     pub key: u8,
@@ -58,19 +60,21 @@ pub struct SynthVoice {
 }
 
 impl SynthVoice {
-    pub const SAMPLE_RATE: u32 = 48000;
-    pub const BUFFER_SIZE: u32 = 1024;
-    pub const EMPTY: SynthVoice = SynthVoice {
-        active: false,
-        stopping: false,
-        key: 0,
-        freq: 0.0,
-        volume: 0.0,
-        tick: 0.0,
-        log_decay: 0.0,
-        instrument: SynthInstrument::PIANO,
-        overtones: [(0.0, 0.0); SynthInstrument::NUM_OVERTONES],
-    };
+    pub fn new(num_channels: usize, sample_rate: f32) -> Self {
+        SynthVoice {
+            num_channels,
+            sample_rate,
+            active: false,
+            stopping: false,
+            key: 0,
+            freq: 0.0,
+            volume: 0.0,
+            tick: 0.0,
+            log_decay: 0.0,
+            instrument: SynthInstrument::PIANO,
+            overtones: [(0.0, 0.0); SynthInstrument::NUM_OVERTONES],
+        }
+    }
 
     fn get_midi_note_frequency(note: i32) -> f32 {
         // We use standard A440 with A4 = general midi note 69, so the
@@ -109,19 +113,22 @@ impl SynthVoice {
     }
 
     pub fn gen_samples(&mut self, data: &mut [i16]) {
+        if self.num_channels == 0 { return; }
+
         let mut t = self.tick;
         let mut volume = self.volume;
         let stopping = self.stopping;
         let vol_delta = if stopping { -volume / data.len() as f32 } else { 0.0 };
         let overtones = &self.overtones;
-        for spl in data.chunks_exact_mut(2) {
+        for spl in data.chunks_exact_mut(self.num_channels) {
             let mut val = 0.0;
             for (freq, mult) in overtones {
-                val += (t * std::f32::consts::TAU / Self::SAMPLE_RATE as f32 * freq).sin() * mult * 3000.0 * volume;
+                val += (t * std::f32::consts::TAU / self.sample_rate * freq).sin() * mult * 3000.0 * volume;
             }
             let ival = val.clamp(i16::MIN as f32, i16::MAX as f32).round() as i16;
-            spl[0] = spl[0].saturating_add(ival);
-            spl[1] = spl[1].saturating_add(ival);
+            for s in spl.iter_mut().take(self.num_channels) {
+                *s = (*s).saturating_add(ival);
+            }
             t += 1.0;
             volume += vol_delta;
         }

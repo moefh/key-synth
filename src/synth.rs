@@ -14,7 +14,6 @@ pub enum SynthKeyState {
     VoiceStolen,
 }
 
-//#[derive(Clone)]
 pub struct SynthPlayer {
     voices: [SynthVoice; SynthPlayer::MAX_VOICES],
     keys: [SynthKeyState; SynthPlayer::NUM_KEYS],
@@ -27,9 +26,9 @@ impl SynthPlayer {
     pub const MAX_VOICES: usize = 8;
     pub const NUM_KEYS: usize = 88;
 
-    fn new() -> Self {
+    fn new(num_channels: usize, sample_rate: f32) -> Self {
         SynthPlayer {
-            voices: [SynthVoice::EMPTY; SynthPlayer::MAX_VOICES],
+            voices: [SynthVoice::new(num_channels, sample_rate); SynthPlayer::MAX_VOICES],
             keys: [SynthKeyState::Off; Self::NUM_KEYS],
             next_voice: 0,
             midi_connected: false,
@@ -111,8 +110,6 @@ pub struct SynthKeyboard {
 }
 
 impl SynthKeyboard {
-    #[allow(dead_code)]
-    pub const MAX_VOICES: usize = SynthPlayer::MAX_VOICES;
     pub const NUM_KEYS: usize = SynthPlayer::NUM_KEYS;
 
     pub fn is_midi_connected(&self) -> bool {
@@ -121,6 +118,14 @@ impl SynthKeyboard {
 
     pub fn set_midi_connected(&self, connected: bool) {
         self.player.lock().unwrap().midi_connected = connected;
+    }
+
+    pub fn get_volume(&self) -> f32 {
+        self.player.lock().unwrap().volume
+    }
+
+    pub fn set_volume(&self, volume: f32) {
+        self.player.lock().unwrap().volume = volume;
     }
 
     pub fn play_key(&self, key: u8, pressure: u8) {
@@ -146,16 +151,6 @@ impl SynthKeyboard {
     pub fn set_instrument(&self, instrument: SynthInstrument) {
         let mut player = self.player.lock().unwrap();
         player.set_instrument(instrument);
-    }
-
-    pub fn get_volume(&self) -> f32 {
-        let player = self.player.lock().unwrap();
-        player.volume
-    }
-
-    pub fn set_volume(&self, volume: f32) {
-        let mut player = self.player.lock().unwrap();
-        player.volume = volume;
     }
 
     pub fn get_player(&self) -> Arc<Mutex<SynthPlayer>> {
@@ -190,11 +185,10 @@ impl SynthKeyboard {
         }
     }
 
-    pub fn start(midi_read: mpsc::Receiver<MidiMessage>, egui_ctx: egui::Context) -> Self {
+    pub fn start(midi_read: mpsc::Receiver<MidiMessage>, egui_ctx: egui::Context, num_channels: usize, sample_rate: f32) -> Self {
         let synth = SynthKeyboard {
-            player: Arc::new(Mutex::new(SynthPlayer::new())),
+            player: Arc::new(Mutex::new(SynthPlayer::new(num_channels, sample_rate))),
         };
-
         let synth_clone = synth.clone();
         thread::spawn(move || {
             synth_clone.run(midi_read, egui_ctx);
